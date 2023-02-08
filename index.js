@@ -332,6 +332,10 @@ var yOffset = 0.00;
 var zOffset = 0.00;
 var aOffset = 0.00;
 
+const rotationThreshold = 0.1;
+const jogCommandInterval = 10;
+const jogMinSpeed = 1000;
+const jogMaxSpeed = 10000;
 
 var feedOverride = 100,
   spindleOverride = 100;
@@ -441,6 +445,15 @@ var status = {
         installedVersion: "",
       },
       connected: false
+  },
+  pendant: {
+    connectionStatus: 0, //0 = not connected, 1 = opening, 2 = connected
+    interfaces: {
+      type: 'USB',
+      activeBaud: "",
+      activePort: ""
+    },
+    alarm: ""
   }
 };
 
@@ -1004,6 +1017,133 @@ io.on("connection", function(socket) {
         io.sockets.emit('data', output);
       }
     }, 500);
+  });
+
+  socket.on('connectPendant', function(data) {
+    console.log("Pendant", "Connecting to " + data.port);
+
+    pendantPort  = new SerialPort({
+      path: data.port,
+      baudRate: parseInt(data.baud),
+      hupcl: false // Don't set DTR - useful for X32 Reset
+    });
+      
+    pendantParser = pendantPort.pipe(new ReadlineParser({
+      delimiter: '\r\n'
+    }));  
+
+    pendantPort.on("error", function(err) {
+      if (err.message != "Pendant port is not open") {
+        debug_log("Error: ", err.message);
+        var output = {
+          'command': '',
+          'response': "PENDANT PORT ERROR: " + err.message,
+          'type': 'error'
+        }
+        io.sockets.emit('data', output);
+
+        if (status.pendant.connectionStatus > 0) {
+          debug_log('WARN: Closing Pendant Port ' + pendantPort.path);
+          status.pendant.connectionStatus = 0;
+          stopPendantPort();
+        } else {
+          debug_log('ERROR: Pendant connection not open!');
+        }
+      }
+
+    });
+
+    pendantPort.on("ready", function(e) {
+      pendantPortOpened(pendantPort, data)
+    });
+
+    pendantPort.on("open", function(e) {
+      pendantPortOpened(pendantPort, data)
+    });
+
+    pendantPort.on("close", function() { // open errors will be emitted as an error event
+      debug_log("PENDANT PORT INFO: Port closed");
+      var output = {
+        'command': 'disconnect',
+        'response': "PENDAND PORT INFO: Port closed",
+        'type': 'info'
+      }
+      io.sockets.emit('data', output);
+      status.pendant.connectionStatus = 0;
+    }); // end port.onclose
+
+    function pendantPortOpened(pendantPort, data) {
+      debug_log("PENDANT PORT INFO: Connected to " + pendantPort.path + " at " + pendantPort.baudRate);
+        var output = {
+          'command': 'connect',
+          'response': "PENDANT PORT INFO: Pendant port is now open: " + pendantPort.path + " - Waiting for commands.",
+          'type': 'info'
+        }
+        io.sockets.emit('data', output);
+
+        status.pendant.connectionStatus = 2;
+        status.pendant.interfaces.activePort = pendantPort.path;
+        status.pendant.interfaces.activeBaud = pendantPort.baudRate;
+
+
+        pendantParser.on('data', function(data) {
+          console.log('PENDANT:', data);
+
+          if (data == 'JB') {
+            console.log('Im a button');
+            return;
+          }
+
+          if (data.startsWith("JD") ) {  // its a jog command
+            var jogCommand = data.split("|");
+            var direction = jogCommand[1];
+            var xyThrow = jogCommand[2];
+            var zThrow = jogCommand[3];
+            console.log('Direction: ' + direction);
+
+            if(Math.abs(zThrow) >= rotationThreshold) {
+              //this.startSmoothJogging("Z");
+              startPendantJogging("Z");
+              return;
+            } 
+            
+            switch(direction) {
+              case "CENTER":
+                stopPendantJogging();
+                break;
+              case "NORTH":
+                startPendantJogging("Y");
+                break;
+              case "SOUTH":
+                startPendantJogging("Y-");
+                break;
+              case "EAST":
+                startPendantJogging("X");
+                break;
+              case "WEST":
+                startPendantJogging("X-");
+                break;
+              case "NORTHEAST":
+                startPendantJogging("X", "Y");
+                break;
+              case "NORTHWEST":
+                startPendantJogging("X-", "Y");
+                break;
+              case "SOUTHEAST":
+                startPendantJogging("X", "Y-");
+                break;
+              case "SOUTHWEST":
+                startPendantJogging("X-", "Y");
+                break;              
+              default:
+                stopPendantJogging();
+                break;
+            }           
+
+          }
+        });    
+    } // end pendantPortOpened
+    
   });
 
   socket.on("connectTo", function(data) { // If a user picks a port to connect to, open a Node SerialPort Instance to it
@@ -2054,9 +2194,6 @@ io.on("connection", function(socket) {
     }
   });
 
-
-
-
 });
 
 function readFile(filePath) {
@@ -2174,6 +2311,21 @@ function runJob(object) {
   } else {
     debug_log('ERROR: Machine connection not open!');
   }
+}
+
+function stopPendantPort() {
+  status.pendant.connectionStatus = 0;
+  status.pendant.interfaces.activePort = false;
+  status.pendant.interfaces.activeBaud = false;
+  pendantPort.drain(pendantPort.close());
+}
+
+function stopPendantJogging() {
+  console.log('I will stop jogging');
+}
+
+function startPendantJogging(...axis) {
+  console.log('I will jog: ' + axis);
 }
 
 function stopPort() {
