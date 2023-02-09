@@ -332,11 +332,6 @@ var yOffset = 0.00;
 var zOffset = 0.00;
 var aOffset = 0.00;
 
-const rotationThreshold = 0.1;
-const jogCommandInterval = 10;
-const jogMinSpeed = 1000;
-const jogMaxSpeed = 10000;
-
 var feedOverride = 100,
   spindleOverride = 100;
 
@@ -1019,6 +1014,12 @@ io.on("connection", function(socket) {
     }, 500);
   });
 
+  socket.on('pendantConfig', function(data) {
+    pendantConfig = data;
+    console.log(JSON.stringify(pendantConfig.commandInterval))
+  });
+
+  // sharmstr:  Core pendant code
   socket.on('connectPendant', function(data) {
     console.log("Pendant", "Connecting to " + data.port);
 
@@ -1065,7 +1066,7 @@ io.on("connection", function(socket) {
       debug_log("PENDANT PORT INFO: Port closed");
       var output = {
         'command': 'disconnect',
-        'response': "PENDAND PORT INFO: Port closed",
+        'response': "PENDANT PORT INFO: Port closed",
         'type': 'info'
       }
       io.sockets.emit('data', output);
@@ -1073,77 +1074,206 @@ io.on("connection", function(socket) {
     }); // end port.onclose
 
     function pendantPortOpened(pendantPort, data) {
+
       debug_log("PENDANT PORT INFO: Connected to " + pendantPort.path + " at " + pendantPort.baudRate);
-        var output = {
-          'command': 'connect',
-          'response': "PENDANT PORT INFO: Pendant port is now open: " + pendantPort.path + " - Waiting for commands.",
-          'type': 'info'
+      var output = {
+        'command': 'connect',
+        'response': "PENDANT PORT INFO: Pendant port is now open: " + pendantPort.path + " - Waiting for commands.",
+        'type': 'info'
+      }
+      io.sockets.emit('data', output);
+
+      status.pendant.connectionStatus = 2;
+      status.pendant.interfaces.activePort = pendantPort.path;
+      status.pendant.interfaces.activeBaud = pendantPort.baudRate;
+
+      const rotationThreshold = 0.1;
+      let xySmoothJogEnabled = false;
+      let zSmoothJogEnabled = false;
+      let currentDirection = null;
+      let zRotation = 0;
+      let xyThrow = 0;
+      let currentAxis = null;
+
+      // testing out having code determine speeds and steps.  If this works
+      // remove them from pendantConfig
+
+      
+      pendantConfig.xy = [
+        {t: 0.2, speed: 1000, step: 0.5},
+        {t: 0.3, speed: 2000, step: 0.75},
+        {t: 0.4, speed: 2500, step: 1},
+        {t: 0.5, speed: 3500, step: 1.5},
+        {t: 0.6, speed: 4500, step: 1.5},
+        {t: 0.7, speed: 5500, step: 1.5},
+        {t: 0.8, speed: 6500, step: 1.75},
+        {t: 0.9, speed: 7500, step: 2},
+        {t: 1, speed: 8000, step: 2},
+      ];
+
+      pendantConfig.z = [
+        {t: 0.2, speed: 300, step: 0.2},
+        {t: 0.5, speed: 500, step: 0.2},
+        {t: 0.7, speed: 700, step: 0.2},
+        {t: 1, speed: 1000, step: 0.5},
+      ];      
+
+      setInterval( function() {
+        let slowestAxis = Math.min(maxRateX, maxRateY);
+        if (xySmoothJogEnabled) {
+          //let movement = getMovement(xyThrow);
+          //let currentSpeed = movement.speed;
+          //let step = movement.step;
+
+          let currentSpeed = (xyThrow * slowestAxis).toFixed(0);
+          let step = ((currentSpeed / 60) * (pendantConfig.commandInterval / 1000)).toFixed(3);
+    
+          var axisString = currentAxis.map(axis => axis + step).join(" ");
+          console.log(`$J=G91 G21 ${axisString} F${currentSpeed}`);
+          addQToEnd(`$J=G91 G21 ${axisString} F${currentSpeed}`);
+          send1Q();
+          waitingOnOK = true;
+          return;
         }
-        io.sockets.emit('data', output);
+    
+        if(zSmoothJogEnabled) {
+          let currentSpeed = 300;
+          let step = 1;
+    
+          var movement = getMovementZ(Math.abs(zRotation));
+    
+          currentSpeed = movement.speed;
+          step = movement.step;
+    
+          if(zRotation < 0) {
+              step = -step;
+          }
+    
+          //console.log('smooth jog Z', currentDirection, currentSpeed, currentAxis);
+          console.log(`$J=G91 G21 Z${step} F${currentSpeed}`);
+          addQToEnd(`$J=G91 G21 Z${step} F${currentSpeed}`);
+          send1Q();
+          waitingOnOK = true;
+    
+          return;
+        }
+    
+      }, pendantConfig.commandInterval);      
+        
+      pendantParser.on('data', function(data) {
+        console.log('PENDANT:', data);
+       
 
-        status.pendant.connectionStatus = 2;
-        status.pendant.interfaces.activePort = pendantPort.path;
-        status.pendant.interfaces.activeBaud = pendantPort.baudRate;
+        // Data structure
+        // JB = button
+        // JD|direction|angle|xyThrow|zRotation|jog%
 
+        if (data === "") {
+          return;
+        }
 
-        pendantParser.on('data', function(data) {
-          console.log('PENDANT:', data);
+        if (data == 'STOP') {
+          zSmoothJogEnabled = false;
+          xySmoothJogEnabled = false;
+          console.log('stopping jogging')
+          addQRealtime(String.fromCharCode(0x85));
+          console.log('Sent: 0x85 Jog Cancel');
+          console.log(queuePointer, gcodeQueue)
+        }
 
-          if (data == 'JB') {
-            console.log('Im a button');
+        if (data == 'JB') {
+          console.log('Im a button');
+          return;
+        }
+
+        if (data.startsWith("JD") ) {  // its a jog command
+          jogCommand = data.split("|");
+          currentDirection = jogCommand[1];
+          xyThrow = jogCommand[3];
+          zRotation = jogCommand[4];
+
+          if(Math.abs(zRotation) >= rotationThreshold) {
+            zSmoothJogEnabled = true;
             return;
+          } else if (zSmoothJogEnabled) {
+            let stop = function() {
+              console.log("z jogging stopped");
+              zSmoothJogEnabled = false;
+              addQRealtime(String.fromCharCode(0x85));
+              console.log('Sent: 0x85 Jog Cancel');
+              console.log(queuePointer, gcodeQueue)
+            }
+            stop();
           }
 
-          if (data.startsWith("JD") ) {  // its a jog command
-            var jogCommand = data.split("|");
-            var direction = jogCommand[1];
-            var xyThrow = jogCommand[2];
-            var zThrow = jogCommand[3];
-            console.log('Direction: ' + direction);
-
-            if(Math.abs(zThrow) >= rotationThreshold) {
-              //this.startSmoothJogging("Z");
-              startPendantJogging("Z");
+          var stopSmoothJogging = function() {
+            if(!xySmoothJogEnabled){
               return;
-            } 
-            
-            switch(direction) {
-              case "CENTER":
-                stopPendantJogging();
-                break;
-              case "NORTH":
-                startPendantJogging("Y");
-                break;
-              case "SOUTH":
-                startPendantJogging("Y-");
-                break;
-              case "EAST":
-                startPendantJogging("X");
-                break;
-              case "WEST":
-                startPendantJogging("X-");
-                break;
-              case "NORTHEAST":
-                startPendantJogging("X", "Y");
-                break;
-              case "NORTHWEST":
-                startPendantJogging("X-", "Y");
-                break;
-              case "SOUTHEAST":
-                startPendantJogging("X", "Y-");
-                break;
-              case "SOUTHWEST":
-                startPendantJogging("X-", "Y");
-                break;              
-              default:
-                stopPendantJogging();
-                break;
-            }           
+            }
 
+            let stop = function() {
+              console.log("smooth jogging stopped")
+              xySmoothJogEnabled = false;
+              addQRealtime(String.fromCharCode(0x85));
+              console.log('Sent: 0x85 Jog Cancel');
+              console.log(queuePointer, gcodeQueue)
+            }
+
+            stop();
+
+            // need more code here
           }
-        });    
+
+          var startSmoothJogging = function(...selectedAxis) {
+            xySmoothJogEnabled = true;
+            currentAxis = selectedAxis;
+          }
+          
+          switch(currentDirection) {
+            case "CENTER":
+              stopSmoothJogging();
+              break;
+            case "NORTH":
+              startSmoothJogging("Y");
+              break;
+            case "SOUTH":
+              startSmoothJogging("Y-");
+              break;
+            case "EAST":
+              startSmoothJogging("X");
+              break;
+            case "WEST":
+              startSmoothJogging("X-");
+              break;
+            case "NORTHEAST":
+              startSmoothJogging("X", "Y");
+              break;
+            case "NORTHWEST":
+              startSmoothJogging("X-", "Y");
+              break;
+            case "SOUTHEAST":
+              startSmoothJogging("X", "Y-");
+              break;
+            case "SOUTHWEST":
+              startSmoothJogging("X-", "Y");
+              break;              
+            default:
+              break;
+          }           
+
+        }
+      });    
     } // end pendantPortOpened
     
+  });
+
+  socket.on('closePendantPort', function(data) { // Close machine port and dump queue
+    if (status.pendant.connectionStatus > 0) {
+      debug_log('WARN: Closing Pendant Port ' + pendantPort.path);
+      stopPendantPort();
+    } else {
+      debug_log('ERROR: Machine connection not open!');
+    }
   });
 
   socket.on("connectTo", function(data) { // If a user picks a port to connect to, open a Node SerialPort Instance to it
@@ -1682,12 +1812,24 @@ io.on("connection", function(socket) {
           }
         }
 
-
         if (command) {
           command = command.replace(/(\r\n|\n|\r)/gm, "");
           // debug_log("CMD: " + command + " / DATA RECV: " + data.replace(/(\r\n|\n|\r)/gm, ""));
 
           if (command != "?" && command != "M105" && data.length > 0 && data.indexOf('<') == -1) {
+            
+            // sharmtr:  couldnt find another way to get grbl settings fromt the main process
+            if (data.indexOf('$110') === 0) {
+              maxRateX = parseInt(data.split('=')[1]);
+            }
+            if (data.indexOf('$111') === 0) {
+              maxRateY = parseInt(data.split('=')[1]);
+            }
+            if (data.indexOf('$112') === 0) {
+              maxRateZ = parseInt(data.split('=')[1]);
+            }
+            //
+
             var string = "";
             if (status.comms.sduploading) {
               string += "SD: "
@@ -2313,19 +2455,46 @@ function runJob(object) {
   }
 }
 
+function getMovement(joystickThrow) {
+  let speed = 0;
+  let step = 0;
+
+  for(const jogConfig of pendantConfig.xy) {
+    if(joystickThrow <= jogConfig.t) {
+        return {
+            speed: jogConfig.speed,
+            step: jogConfig.step,
+        }
+    }
+  }
+  return {
+      speed: 0,
+      step: 0,
+  }
+}
+
+function getMovementZ(joystickRotation) {
+
+  for(const jogConfig of pendantConfig.z) {
+    if(joystickRotation <= jogConfig.t) {
+        return {
+            speed: jogConfig.speed,
+            step: jogConfig.step,
+        }
+    }
+  }
+
+  return {
+      speed: 0,
+      step: 0,
+  }
+} 
+
 function stopPendantPort() {
   status.pendant.connectionStatus = 0;
   status.pendant.interfaces.activePort = false;
   status.pendant.interfaces.activeBaud = false;
   pendantPort.drain(pendantPort.close());
-}
-
-function stopPendantJogging() {
-  console.log('I will stop jogging');
-}
-
-function startPendantJogging(...axis) {
-  console.log('I will jog: ' + axis);
 }
 
 function stopPort() {
