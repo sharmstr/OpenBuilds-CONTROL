@@ -1016,7 +1016,7 @@ io.on("connection", function(socket) {
 
   socket.on('pendantConfig', function(data) {
     pendantConfig = data;
-    console.log(JSON.stringify(pendantConfig.commandInterval))
+    console.log(JSON.stringify(pendantConfig.commandIntervalOverride))
   });
 
   // sharmstr:  Core pendant code
@@ -1088,46 +1088,21 @@ io.on("connection", function(socket) {
       status.pendant.interfaces.activeBaud = pendantPort.baudRate;
 
       const rotationThreshold = 0.1;
+      const commandRateDefault = 10; 
       let xySmoothJogEnabled = false;
       let zSmoothJogEnabled = false;
       let currentDirection = null;
       let zRotation = 0;
       let xyThrow = 0;
       let currentAxis = null;
+      let commandRate = Math.max(commandRateDefault, pendantConfig.commandIntervalOverride);
 
-      // testing out having code determine speeds and steps.  If this works
-      // remove them from pendantConfig
-
-      
-      pendantConfig.xy = [
-        {t: 0.2, speed: 1000, step: 0.5},
-        {t: 0.3, speed: 2000, step: 0.75},
-        {t: 0.4, speed: 2500, step: 1},
-        {t: 0.5, speed: 3500, step: 1.5},
-        {t: 0.6, speed: 4500, step: 1.5},
-        {t: 0.7, speed: 5500, step: 1.5},
-        {t: 0.8, speed: 6500, step: 1.75},
-        {t: 0.9, speed: 7500, step: 2},
-        {t: 1, speed: 8000, step: 2},
-      ];
-
-      pendantConfig.z = [
-        {t: 0.2, speed: 300, step: 0.2},
-        {t: 0.5, speed: 500, step: 0.2},
-        {t: 0.7, speed: 700, step: 0.2},
-        {t: 1, speed: 1000, step: 0.5},
-      ];      
-
-      setInterval( function() {
-        let slowestAxis = Math.min(maxRateX, maxRateY);
+      setInterval( function() {        
         if (xySmoothJogEnabled) {
-          //let movement = getMovement(xyThrow);
-          //let currentSpeed = movement.speed;
-          //let step = movement.step;
-
+          let slowestAxis = Math.min(maxRateX, maxRateY, pendantConfig.maxRateXoverride, pendantConfig.maxRateYoverride);
+          console.log('slowest ' + slowestAxis)
           let currentSpeed = (xyThrow * slowestAxis).toFixed(0);
-          let step = ((currentSpeed / 60) * (pendantConfig.commandInterval / 1000)).toFixed(3);
-    
+          let step = ((currentSpeed / 60) * (commandRate / 1000)).toFixed(3);    
           var axisString = currentAxis.map(axis => axis + step).join(" ");
           console.log(`$J=G91 G21 ${axisString} F${currentSpeed}`);
           addQToEnd(`$J=G91 G21 ${axisString} F${currentSpeed}`);
@@ -1137,19 +1112,12 @@ io.on("connection", function(socket) {
         }
     
         if(zSmoothJogEnabled) {
-          let currentSpeed = 300;
-          let step = 1;
-    
-          var movement = getMovementZ(Math.abs(zRotation));
-    
-          currentSpeed = movement.speed;
-          step = movement.step;
-    
+          let slowestAxis = Math.min(maxRateZ, pendantConfig.maxRateZoverride);
+          let currentSpeed = (Math.abs(zRotation) * slowestAxis).toFixed(0);
+          let step = ((currentSpeed / 60) * (commandRate / 1000)).toFixed(3);
           if(zRotation < 0) {
-              step = -step;
-          }
-    
-          //console.log('smooth jog Z', currentDirection, currentSpeed, currentAxis);
+            step = -step;
+          }  
           console.log(`$J=G91 G21 Z${step} F${currentSpeed}`);
           addQToEnd(`$J=G91 G21 Z${step} F${currentSpeed}`);
           send1Q();
@@ -1158,12 +1126,11 @@ io.on("connection", function(socket) {
           return;
         }
     
-      }, pendantConfig.commandInterval);      
+      }, commandRate);      
         
       pendantParser.on('data', function(data) {
         console.log('PENDANT:', data);
-       
-
+        
         // Data structure
         // JB = button
         // JD|direction|angle|xyThrow|zRotation|jog%
@@ -2454,41 +2421,6 @@ function runJob(object) {
     debug_log('ERROR: Machine connection not open!');
   }
 }
-
-function getMovement(joystickThrow) {
-  let speed = 0;
-  let step = 0;
-
-  for(const jogConfig of pendantConfig.xy) {
-    if(joystickThrow <= jogConfig.t) {
-        return {
-            speed: jogConfig.speed,
-            step: jogConfig.step,
-        }
-    }
-  }
-  return {
-      speed: 0,
-      step: 0,
-  }
-}
-
-function getMovementZ(joystickRotation) {
-
-  for(const jogConfig of pendantConfig.z) {
-    if(joystickRotation <= jogConfig.t) {
-        return {
-            speed: jogConfig.speed,
-            step: jogConfig.step,
-        }
-    }
-  }
-
-  return {
-      speed: 0,
-      step: 0,
-  }
-} 
 
 function stopPendantPort() {
   status.pendant.connectionStatus = 0;
