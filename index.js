@@ -1222,7 +1222,7 @@ io.on("connection", function(socket) {
               startSmoothJogging("X", "Y-");
               break;
             case "SOUTHWEST":
-              startSmoothJogging("X-", "Y");
+              startSmoothJogging("X-", "Y-");
               break;              
             default:
               break;
@@ -1798,6 +1798,11 @@ io.on("connection", function(socket) {
             //
 
             var string = "";
+            if (data.indexOf('$J') == 0 && data.indexOf('ok') === -1) {
+              string += "here "
+            }
+
+            
             if (status.comms.sduploading) {
               string += "SD: "
             }
