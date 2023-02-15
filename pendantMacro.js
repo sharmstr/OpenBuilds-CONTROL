@@ -5,6 +5,11 @@ var pendantConfig = {
   maxRateXoverride: 2500,  // override grbl max rate for pendant jogging
   maxRateYoverride: 2500,  // override grbl max rate for pendant jogging
   maxRateZoverride: 300, // override grbl max rate for penant jogging
+  commands: {
+    stop: 'STOP',
+    
+
+  }
 };
 socket.emit('pendantConfig', pendantConfig);
 

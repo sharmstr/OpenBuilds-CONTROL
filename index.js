@@ -1096,6 +1096,11 @@ io.on("connection", function(socket) {
       let xyThrow = 0;
       let currentAxis = null;
       let commandRate = Math.max(commandRateDefault, pendantConfig.commandIntervalOverride);
+      let stopCmd = {
+        stop: false,
+        jog: true,
+        abort: false
+      }
 
       setInterval( function() {        
         if (xySmoothJogEnabled) {
@@ -1143,9 +1148,7 @@ io.on("connection", function(socket) {
           zSmoothJogEnabled = false;
           xySmoothJogEnabled = false;
           console.log('stopping jogging')
-          addQRealtime(String.fromCharCode(0x85));
-          console.log('Sent: 0x85 Jog Cancel');
-          console.log(queuePointer, gcodeQueue)
+          stop(stopCmd); // not needed but fail safe
         }
 
         if (data == 'JB') {
@@ -1163,14 +1166,12 @@ io.on("connection", function(socket) {
             zSmoothJogEnabled = true;
             return;
           } else if (zSmoothJogEnabled) {
-            let stop = function() {
+            let stopJog = function() {
               console.log("z jogging stopped");
               zSmoothJogEnabled = false;
-              addQRealtime(String.fromCharCode(0x85));
-              console.log('Sent: 0x85 Jog Cancel');
-              console.log(queuePointer, gcodeQueue)
+              stop(stopCmd); // not needed but fail safe
             }
-            stop();
+            stopJog();
           }
 
           var stopSmoothJogging = function() {
@@ -1178,15 +1179,13 @@ io.on("connection", function(socket) {
               return;
             }
 
-            let stop = function() {
+            let stopJog = function() {
               console.log("smooth jogging stopped")
               xySmoothJogEnabled = false;
-              addQRealtime(String.fromCharCode(0x85));
-              console.log('Sent: 0x85 Jog Cancel');
-              console.log(queuePointer, gcodeQueue)
+              stop(stopCmd); // not needed but fail safe
             }
 
-            stop();
+            stopJog();
 
             // need more code here
           }
