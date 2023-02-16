@@ -1094,14 +1094,25 @@ io.on("connection", function(socket) {
       let currentDirection = null;
       let zRotation = 0;
       let xyThrow = 0;
+      let stepSize = pendantConfig.stepSize;
+      let incJog = true;  // always start in inc
       let currentAxis = null;
       let commandRate = Math.max(commandRateDefault, pendantConfig.commandIntervalOverride);
-      let stopCmd = {
+      let maxJogRateX = Math.min(maxRateX, pendantConfig.maxRateXoverride);
+      let maxJogRateY = Math.min(maxRateY, pendantConfig.maxRateYoverride);
+      let maxJogRateZ = Math.min(maxRateZ, pendantConfig.maxRateZoverride);
+      let stopJogCmd = {
         stop: false,
         jog: true,
         abort: false
       }
+      let stopCmd = {
+        stop: true,
+        jog: false,
+        abort: false
+      }
 
+      
       setInterval( function() {        
         if (xySmoothJogEnabled) {
           let slowestAxis = Math.min(maxRateX, maxRateY, pendantConfig.maxRateXoverride, pendantConfig.maxRateYoverride);
@@ -1135,100 +1146,296 @@ io.on("connection", function(socket) {
         
       pendantParser.on('data', function(data) {
         console.log('PENDANT:', data);
+        pendantCmd = data.split(",");
         
-        // Data structure
-        // JB = button
-        // JD|direction|angle|xyThrow|zRotation|jog%
+        
+        // serial map
+        // 1 X AXIS SELECT  not used
+        // 2 Y AXIS SELECT not used
+        // 3 Z AXIS SELECT not used
+        // 4 COOLANT SELECT done
+        // 5 STOP SELECT done
+        // 6 PAUSE SELECT done
+        // 7 PLAY SELECT done
+        // 8 Z UP SELECT 
+        // 9 Z DOWN SELECT
+        // 10 Origin
+        //    1- XZero
+        //    2- YZero
+        //    3- ZZero
+        //    4- X Divide
+        //    5- Y Divide
+        //    6- Z Divide
+        // 11 Overrides
+        //     1-Feed done
+        //     2-RPM done
+        //     3-MaxVelocity not used
+        //     4-Jog done
+        // 12 Continuous
+        //    1-X axis
+        //    2-Y axis
+        // 13 Stop Jog done
+        // 14 .0001 Select done
+        // 15 .0010 Select done
+        // 16 Step
+        //    1-X done
+        //    2-Y done
+        //    3-Z done
+        // 17 JogContinuous    
+        // 18 DynamicJoy
+        // 19 DynamicWheel
 
-        if (data === "") {
+        if (data === "") {  // in case we didnt receive data
           return;
         }
 
-        if (data == 'STOP') {
-          zSmoothJogEnabled = false;
-          xySmoothJogEnabled = false;
-          console.log('stopping jogging')
-          stop(stopCmd); // not needed but fail safe
-        }
+        console.log('CMD: ' + pendantCmd[0]);
 
-        if (data == 'JB') {
-          console.log('Im a button');
-          return;
-        }
+        switch(true) {
 
-        if (data.startsWith("JD") ) {  // its a jog command
-          jogCommand = data.split("|");
-          currentDirection = jogCommand[1];
-          xyThrow = jogCommand[3];
-          zRotation = jogCommand[4];
-
-          if(Math.abs(zRotation) >= rotationThreshold) {
-            zSmoothJogEnabled = true;
-            return;
-          } else if (zSmoothJogEnabled) {
-            let stopJog = function() {
-              console.log("z jogging stopped");
-              zSmoothJogEnabled = false;
-              stop(stopCmd); // not needed but fail safe
+          case ((pendantCmd[0] == 4) && (status.comms.runStatus == "Idle")):
+            
+            if (status.machine.modals.coolantstate == "M9") {
+              addQToEnd(pendantConfig.commands.coolant);
+            } else {
+              addQToEnd(`M9`);
             }
-            stopJog();
-          }
+            send1Q();
+            var output = {
+              'command': 'Pendant Message',
+              'response': "Toggle coolant.",
+              'type': 'info'
+            }
+            io.sockets.emit('data', output);
+            break;
 
-          var stopSmoothJogging = function() {
-            if(!xySmoothJogEnabled){
+          case (pendantCmd[0] == 5):
+            
+            console.log('im stopping')
+            stop(stopCmd);
+            break;
+          
+          case (pendantCmd[0] == 6):
+            
+            pause();
+            break;
+
+          case (pendantCmd[0] == 7):
+            
+            if (status.comms.paused) {
+              unpause();
               return;
             }
-
-            let stopJog = function() {
-              console.log("smooth jogging stopped")
-              xySmoothJogEnabled = false;
-              stop(stopCmd); // not needed but fail safe
+            if (status.comms.runStatus != "Run") {
+              // Not sure how to run a loaded file
+              // so we will just send a click to the renderer
+              io.sockets.emit('fromPendant', 'clickRun');
+              return;
             }
+            break;
 
-            stopJog();
+          case ((pendantCmd[0] == 8)  && (status.comms.runStatus == "Idle")):
+            // z axis button
+            break;
 
-            // need more code here
-          }
-
-          var startSmoothJogging = function(...selectedAxis) {
-            xySmoothJogEnabled = true;
-            currentAxis = selectedAxis;
-          }
+          case ((pendantCmd[0] == 9) && (status.comms.runStatus == "Idle")):
+            // z axis button
+            break;      
           
-          switch(currentDirection) {
-            case "CENTER":
-              stopSmoothJogging();
-              break;
-            case "NORTH":
-              startSmoothJogging("Y");
-              break;
-            case "SOUTH":
-              startSmoothJogging("Y-");
-              break;
-            case "EAST":
-              startSmoothJogging("X");
-              break;
-            case "WEST":
-              startSmoothJogging("X-");
-              break;
-            case "NORTHEAST":
-              startSmoothJogging("X", "Y");
-              break;
-            case "NORTHWEST":
-              startSmoothJogging("X-", "Y");
-              break;
-            case "SOUTHEAST":
-              startSmoothJogging("X", "Y-");
-              break;
-            case "SOUTHWEST":
-              startSmoothJogging("X-", "Y-");
-              break;              
-            default:
-              break;
-          }           
+          case (pendantCmd[0] == 11):
+            // have a look at savetoupdate sliders.  might be something in
+            // there we need to do.
+            let override = {
+              slider: pendantCmd[1],
+              direction: pendantCmd[2]
+            }
+            io.sockets.emit('fromPendant', override );
+            break;
 
+          case ((pendantCmd[0] == 13) && (status.comms.runStatus != "Run")):
+            
+            zSmoothJogEnabled = false;
+            xySmoothJogEnabled = false;
+            console.log('stopping jogging')
+            stop(stopJogCmd); // not needed but fail safe
+            break;
+
+          case ((pendantCmd[0] == 12) && (status.comms.runStatus == "Idle")):
+            //Continous jogging. 
+
+            
+            if (pendantCmd[1] == 1) {
+              cSpeed = (maxJogRateX * (status.machine.overrides.rapidOverride / 100));
+              dt = (maxJogRateX/60) / (2 * maxAcellX * 14);
+            };
+
+            if (pendantCmd[1] == 2) {
+              cSpeed = (maxJogRateY * (status.machine.overrides.rapidOverride / 100));
+              dt = (maxJogRateY/60) / (2 * maxAcellY * 14);
+            };
+           
+            let v = cSpeed / 60;
+            let cStep = (v * dt).toFixed(2);
+
+
+            jogString = null;
+            switch(true) {
+              case ((pendantCmd[1] == 1) && (pendantCmd[2] == 1)):
+                jogString = `$J=G91 G21 X${cStep} F${cSpeed}`;
+                break;
+              case ((pendantCmd[1] == 1) && (pendantCmd[2] == 2)):
+                jogString = `$J=G91 G21 X-${cStep} F${cSpeed}`;
+                break;
+              case ((pendantCmd[1] == 2) && (pendantCmd[2] == 1)):
+                jogString = `$J=G91 G21 Y${cStep} F${cSpeed}`;
+                break;
+              case ((pendantCmd[1] == 2) && (pendantCmd[2] == 2)):
+                jogString = `$J=G91 G21 Y-${cStep} F${cSpeed}`;
+                break; 
+              default:
+                break;
+            }
+            if(jogString) {
+              addQToEnd(jogString);
+              send1Q();
+            } 
+            break;    
+            
+          case (pendantCmd[0] == 14):
+            
+            stepSize = ".1";
+            break;
+
+          case (pendantCmd[0] == 15):
+            
+            stepSize = "1";
+            break;
+
+          case ((pendantCmd[0] == 16) && (status.comms.runStatus == "Idle")):
+
+            jogString = null;
+            switch(true) {
+              case ((pendantCmd[1] == 1) && (pendantCmd[2] == 1)):
+                jogString = `$J=G91 G21 X${stepSize} F${maxJogRateX}`;
+                break;
+              case ((pendantCmd[1] == 1) && (pendantCmd[2] == 2)):
+                jogString = `$J=G91 G21 X-${stepSize} F${maxJogRateX}`;
+                break;
+              case ((pendantCmd[1] == 2) && (pendantCmd[2] == 1)):
+                jogString = `$J=G91 G21 Y${stepSize} F${maxJogRateY}`;
+                break;
+              case ((pendantCmd[1] == 2) && (pendantCmd[2] == 2)):
+                jogString = `$J=G91 G21 Y-${stepSize} F${maxJogRateY}`;
+                break;
+              case ((pendantCmd[1] == 3) && (pendantCmd[2] == 1)):
+                jogString = `$J=G91 G21 Z${stepSize} F${maxJogRateZ}`;
+                break;
+              case ((pendantCmd[1] == 3) && (pendantCmd[2] == 2)):
+                jogString = `$J=G91 G21 Z-${stepSize} F${maxJogRateZ}`;
+                break; 
+              default:
+                break;
+            }
+            if(jogString) {
+              addQToEnd(jogString);
+              send1Q();
+            } 
+            break;    
+          
+          case (pendantCmd[0] == 18):
+            // dynamic jogging here
+            break;
+
+          default:
+            break;
         }
-      });    
+
+
+
+
+        
+
+        // things we can only do at when not running a job
+        if (status.comms.runStatus != "Run") {        
+
+          
+  
+          if (data.startsWith("JD") ) {  // its a jog command
+            jogCommand = data.split("|");
+            currentDirection = jogCommand[1];
+            xyThrow = jogCommand[3];
+            zRotation = jogCommand[4];
+  
+            if(Math.abs(zRotation) >= rotationThreshold) {
+              zSmoothJogEnabled = true;
+              return;
+            } else if (zSmoothJogEnabled) {
+              let stopJog = function() {
+                console.log("z jogging stopped");
+                zSmoothJogEnabled = false;
+                stop(stopJogCmd); // not needed but fail safe
+              }
+              stopJog();
+            }
+  
+            var stopSmoothJogging = function() {
+              if(!xySmoothJogEnabled){
+                return;
+              }
+  
+              let stopJog = function() {
+                console.log("smooth jogging stopped")
+                xySmoothJogEnabled = false;
+                stop(stopJogCmd); // not needed but fail safe
+              }
+  
+              stopJog();
+  
+              // need more code here
+            }
+  
+            var startSmoothJogging = function(...selectedAxis) {
+              xySmoothJogEnabled = true;
+              currentAxis = selectedAxis;
+            }
+            
+            switch(currentDirection) {
+              case "CENTER":
+                stopSmoothJogging();
+                break;
+              case "NORTH":
+                startSmoothJogging("Y");
+                break;
+              case "SOUTH":
+                startSmoothJogging("Y-");
+                break;
+              case "EAST":
+                startSmoothJogging("X");
+                break;
+              case "WEST":
+                startSmoothJogging("X-");
+                break;
+              case "NORTHEAST":
+                startSmoothJogging("X", "Y");
+                break;
+              case "NORTHWEST":
+                startSmoothJogging("X-", "Y");
+                break;
+              case "SOUTHEAST":
+                startSmoothJogging("X", "Y-");
+                break;
+              case "SOUTHWEST":
+                startSmoothJogging("X-", "Y-");
+                break;              
+              default:
+                break;
+            }           
+  
+          }
+        }   // things we can do when not running
+      });   
+
+         
     } // end pendantPortOpened
     
   });
@@ -1793,6 +2000,15 @@ io.on("connection", function(socket) {
             }
             if (data.indexOf('$112') === 0) {
               maxRateZ = parseInt(data.split('=')[1]);
+            }
+            if (data.indexOf('$120') === 0) {
+              maxAcellX = parseInt(data.split('=')[1]);
+            }
+            if (data.indexOf('$121') === 0) {
+              maxAcellY = parseInt(data.split('=')[1]);
+            }
+            if (data.indexOf('$122') === 0) {
+              maxAcellZ = parseInt(data.split('=')[1]);
             }
             //
 
