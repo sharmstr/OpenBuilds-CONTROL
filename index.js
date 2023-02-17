@@ -1099,9 +1099,22 @@ io.on("connection", function(socket) {
       let incJog = true;  // always start in inc
       let currentAxis = null;
       let commandRate = Math.max(commandRateDefault, pendantConfig.commandIntervalOverride);
+      let maxJogRate = {
+        X: Math.min(maxRateX, pendantConfig.maxRateXoverride),
+        Y: Math.min(maxRateY, pendantConfig.maxRateYoverride),
+        Z: Math.min(maxRateZ, pendantConfig.maxRateZoverride)
+      }
+      let minJogRate = {
+        X: 1000,
+        Y: 1000,
+        Z: 100
+      }
       let maxJogRateX = Math.min(maxRateX, pendantConfig.maxRateXoverride);
       let maxJogRateY = Math.min(maxRateY, pendantConfig.maxRateYoverride);
+      let minJogRateXY = 1000; // need to make this dynamic eventually
       let maxJogRateZ = Math.min(maxRateZ, pendantConfig.maxRateZoverride);
+      let minJogRateZ = 100; // need to make this dynamic eventually
+      let coolantCmd = (pendantConfig.commands.coolant == 'M9') ? '0xA0' :'0xA1';
       let stopJogCmd = {
         stop: false,
         jog: true,
@@ -1112,8 +1125,19 @@ io.on("connection", function(socket) {
         jog: false,
         abort: false
       }
+      newSec = Date.now();
 
-      
+
+      setInterval( function() {
+        if (xySmoothJogEnabled) {
+            // let's do some jogging
+            console.log('jogging');
+            return;
+        }
+
+      }, 10);
+
+     
       /*
       setInterval( function() {        
         if (xySmoothJogEnabled) {
@@ -1193,17 +1217,19 @@ io.on("connection", function(socket) {
           return;
         }
 
-
         switch(true) {
 
-          case ((pendantCmd[0] == 4) && (status.comms.runStatus == "Idle")):
+          case (pendantCmd[0] == 4):
             
+            // in testing it seems that if coolant is on before job start,
+            // Control might send a coolant off when the job starts.
+            // not a big deal, but need to investigate
+            addQRealtime(String.fromCharCode(coolantCmd)); // toggle coolant
             if (status.machine.modals.coolantstate == "M9") {
-              addQToEnd(pendantConfig.commands.coolant);
+              status.machine.modals.coolantstate = pendantConfig.commands.coolant;
             } else {
-              addQToEnd(`M9`);
-            }
-            send1Q();
+              status.machine.modals.coolantstate = "M9";
+            }            
             var output = {
               'command': 'Pendant Message',
               'response': "Toggle coolant.",
@@ -1257,41 +1283,58 @@ io.on("connection", function(socket) {
 
           case ((pendantCmd[0] == 12) && (status.comms.runStatus == "Idle")):
             //Continous jogging. 
-            
-            if (pendantCmd[1] == 1) {
-              cSpeed = (maxJogRateX * (jogOverride / 100));
-              dt = ((maxJogRateX/60) * 2) / (2 * maxAcellX * 14);
-            };
 
-            if (pendantCmd[1] == 2) {
-              cSpeed = (maxJogRateY * (jogOverride / 100));
-              dt = ((maxJogRateY/60) * 2) / (2 * maxAcellY * 14);
-            };
-           
-            let v = cSpeed / 60;
-            let cStep = (v * dt).toFixed(2);
             jogString = null;
+            oldSec = newSec;
+            newSec = Date.now();
+            delta = newSec - oldSec;
+            console.log(delta);
+            dir = (pendantCmd[2] > 1) ? -1 : 1;
+            axis = (pendantCmd[1] == 1) ? "X" : (pendantCmd[1] == 2) ? "Y" : "Z";
+            console.log('axis: ' + axis + " pendantCmd[1]: " + pendantCmd[1])
+           
 
-            switch(true) {
-              case ((pendantCmd[1] == 1) && (pendantCmd[2] == 1)):
-                jogString = `$J=G91 G21 X${cStep} F${cSpeed}`;
-                break;
-              case ((pendantCmd[1] == 1) && (pendantCmd[2] == 2)):
-                jogString = `$J=G91 G21 X-${cStep} F${cSpeed}`;
-                break;
-              case ((pendantCmd[1] == 2) && (pendantCmd[2] == 1)):
-                jogString = `$J=G91 G21 Y${cStep} F${cSpeed}`;
-                break;
-              case ((pendantCmd[1] == 2) && (pendantCmd[2] == 2)):
-                jogString = `$J=G91 G21 Y-${cStep} F${cSpeed}`;
-                break; 
-              default:
-                break;
+            if (delta > 500) {
+              // its been too long so lets reset
+              return;
             }
+
+            if (delta > 100) {
+              // slow jogging
+              s = 0.1 * dir;
+              f = 1000;
+             
+            } else {            
+              
+              delta = (delta < 10) ? 10 : delta;
+              f = (100 - delta) * (maxJogRate[axis] - minJogRate[axis]) / (100 - 10) + minJogRate[axis]
+              // Convert feed rate from mm/min to mm/sec
+              v = (f / 60.0);
+              console.log("f : " + f)
+              console.log("v : " + v)
+              // Update AXES_ACCEL so it uses the value for the
+              // selected axis.
+              dt = ((v * v) / (2.0 * maxAcellX * 14));
+              console.log("dt: " + dt)
+              //Serial.print("dt: ");Serial.println(dt);
+              s = (v * dt) * dir;
+              console.log("s: " + s)
+              s /= Math.abs(10);
+              console.log("s: " + s)  
+              
+            }
+
+            if (pendantCmd[1] == 3) { // ignore Z for now
+              return;
+            }
+
+            jogString = `$J=G91 G21 ${axis}${(s).toFixed(2)} F${(f).toFixed(0)}`;
+
             if(jogString) {
+              console.log(jogString)
               addQToEnd(jogString);
               send1Q();
-            } 
+            }             
             break;    
           
           case ((pendantCmd[0] == 13) && (status.comms.runStatus != "Run")):
@@ -1991,7 +2034,6 @@ io.on("connection", function(socket) {
           // debug_log("CMD: " + command + " / DATA RECV: " + data.replace(/(\r\n|\n|\r)/gm, ""));
 
           if (command != "?" && command != "M105" && data.length > 0 && data.indexOf('<') == -1) {
-            
             // sharmtr:  couldnt find another way to get grbl settings from the main process
             // remember to add a check to verify grbl is loaded in the pendant connect logic
             if (data.indexOf('$110') === 0) {
