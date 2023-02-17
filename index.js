@@ -334,6 +334,7 @@ var aOffset = 0.00;
 
 var feedOverride = 100,
   spindleOverride = 100;
+var jogOverride = 100;
 
 
 //regex to identify MD5hash on sdupload later
@@ -1113,6 +1114,7 @@ io.on("connection", function(socket) {
       }
 
       
+      /*
       setInterval( function() {        
         if (xySmoothJogEnabled) {
           let slowestAxis = Math.min(maxRateX, maxRateY, pendantConfig.maxRateXoverride, pendantConfig.maxRateYoverride);
@@ -1142,7 +1144,9 @@ io.on("connection", function(socket) {
           return;
         }
     
-      }, commandRate);      
+      }, commandRate);   
+      
+      */
         
       pendantParser.on('data', function(data) {
         console.log('PENDANT:', data);
@@ -1189,7 +1193,6 @@ io.on("connection", function(socket) {
           return;
         }
 
-        console.log('CMD: ' + pendantCmd[0]);
 
         switch(true) {
 
@@ -1252,33 +1255,23 @@ io.on("connection", function(socket) {
             io.sockets.emit('fromPendant', override );
             break;
 
-          case ((pendantCmd[0] == 13) && (status.comms.runStatus != "Run")):
-            
-            zSmoothJogEnabled = false;
-            xySmoothJogEnabled = false;
-            console.log('stopping jogging')
-            stop(stopJogCmd); // not needed but fail safe
-            break;
-
           case ((pendantCmd[0] == 12) && (status.comms.runStatus == "Idle")):
             //Continous jogging. 
-
             
             if (pendantCmd[1] == 1) {
-              cSpeed = (maxJogRateX * (status.machine.overrides.rapidOverride / 100));
-              dt = (maxJogRateX/60) / (2 * maxAcellX * 14);
+              cSpeed = (maxJogRateX * (jogOverride / 100));
+              dt = ((maxJogRateX/60) * 2) / (2 * maxAcellX * 14);
             };
 
             if (pendantCmd[1] == 2) {
-              cSpeed = (maxJogRateY * (status.machine.overrides.rapidOverride / 100));
-              dt = (maxJogRateY/60) / (2 * maxAcellY * 14);
+              cSpeed = (maxJogRateY * (jogOverride / 100));
+              dt = ((maxJogRateY/60) * 2) / (2 * maxAcellY * 14);
             };
            
             let v = cSpeed / 60;
             let cStep = (v * dt).toFixed(2);
-
-
             jogString = null;
+
             switch(true) {
               case ((pendantCmd[1] == 1) && (pendantCmd[2] == 1)):
                 jogString = `$J=G91 G21 X${cStep} F${cSpeed}`;
@@ -1300,7 +1293,15 @@ io.on("connection", function(socket) {
               send1Q();
             } 
             break;    
+          
+          case ((pendantCmd[0] == 13) && (status.comms.runStatus != "Run")):
             
+            zSmoothJogEnabled = false;
+            xySmoothJogEnabled = false;
+            console.log('stopping jogging')
+            stop(stopJogCmd); // not needed but fail safe
+            break;
+
           case (pendantCmd[0] == 14):
             
             stepSize = ".1";
@@ -1354,12 +1355,11 @@ io.on("connection", function(socket) {
 
 
         
-
+        /*
         // things we can only do at when not running a job
-        if (status.comms.runStatus != "Run") {        
-
+        if (status.comms.runStatus != "Run") {           
           
-  
+
           if (data.startsWith("JD") ) {  // its a jog command
             jogCommand = data.split("|");
             currentDirection = jogCommand[1];
@@ -1433,6 +1433,7 @@ io.on("connection", function(socket) {
   
           }
         }   // things we can do when not running
+        */
       });   
 
          
@@ -1991,7 +1992,8 @@ io.on("connection", function(socket) {
 
           if (command != "?" && command != "M105" && data.length > 0 && data.indexOf('<') == -1) {
             
-            // sharmtr:  couldnt find another way to get grbl settings fromt the main process
+            // sharmtr:  couldnt find another way to get grbl settings from the main process
+            // remember to add a check to verify grbl is loaded in the pendant connect logic
             if (data.indexOf('$110') === 0) {
               maxRateX = parseInt(data.split('=')[1]);
             }
@@ -2278,6 +2280,10 @@ io.on("connection", function(socket) {
     } else {
       debug_log('ERROR: Machine connection not open!');
     }
+  });
+
+  socket.on('jogOverride', function(data) {
+    jogOverride = data;
   });
 
   socket.on('feedOverride', function(data) {

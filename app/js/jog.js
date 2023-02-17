@@ -20,6 +20,11 @@ function jogOverride(newVal) {
     jogRateA = (grblParams['$113'] * (newVal / 100)).toFixed(0);
   }
   localStorage.setItem('jogOverride', newVal);
+
+  // because I couldnt find another way to get that data
+  // side note: this updates constantly. not sure if the additional 
+  // socket.emit will be an issue or not
+  socket.emit('jogOverride', newVal);  
 }
 
 function setADist(newADist) {
@@ -98,7 +103,6 @@ function inMode() {
       redrawGrid(xmin / 25.4, xmax / 25.4, ymin / 25.4, ymax / 25.4, true);
     }
   }
-
 }
 
 function cancelJog() {
