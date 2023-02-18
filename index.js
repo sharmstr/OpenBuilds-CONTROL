@@ -1124,6 +1124,7 @@ io.on("connection", function(socket) {
         abort: false
       }
       newSec = Date.now();
+      waitingForOk = false;
 
 
       setInterval( function() {
@@ -1279,6 +1280,10 @@ io.on("connection", function(socket) {
             break;
 
           case ((pendantCmd[0] == 12) && (status.comms.runStatus == "Idle")):
+            if(waitingForOk) {
+              console.log('ign');
+              return;
+            }
             //Continous jogging. 
             //console.log("P: " + queuePointer);
             console.log("Q: " + gcodeQueue.length);
@@ -1308,13 +1313,14 @@ io.on("connection", function(socket) {
               delta = (delta < 10) ? 10 : delta;
               f = (100 - delta) * (maxJogRate[axis] - minJogRate[axis]) / (100 - 10) + minJogRate[axis]
               // Convert feed rate from mm/min to mm/sec
-              v = (6000 / 60.0);
+              v = (f / 60.0);
               //console.log("f : " + f)
               //console.log("v : " + v)
               // Update AXES_ACCEL so it uses the value for the
               // selected axis.
               //dt = ((v * v) / (2.0 * maxAcellX * 14));
-              dt = v / (2 * maxAcellX * 10)
+             // dt = v / (2 * maxAcellX * 10)
+              dt = .01
               //console.log("dt: " + dt)
               //Serial.print("dt: ");Serial.println(dt);
               s = (v * dt) * dir;
@@ -1334,6 +1340,7 @@ io.on("connection", function(socket) {
               //console.log(jogString)
               addQToEnd(jogString);
               send1Q();
+              waitingForOk = true;
             }             
             break;    
           
