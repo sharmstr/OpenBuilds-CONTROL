@@ -10,9 +10,9 @@ setTimeout(function () {
 window.connectPendant = function () {
   var pendantConfig = {  
     commandIntervalOverride: 10,  // How fast can grbl process the command
-    maxRateXoverride: 2000,  // override grbl max rate for pendant jogging
-    maxRateYoverride: 2000,  // override grbl max rate for pendant jogging
-    maxRateZoverride: 300, // override grbl max rate for penant jogging
+    maxRateXoverride: 6000,  // override grbl max rate for pendant jogging
+    maxRateYoverride: 6000,  // override grbl max rate for pendant jogging
+    maxRateZoverride: 1000, // override grbl max rate for penant jogging
     stepSize: ".1", // no way to know selected step size or startup.  so use this value until rotary switch is turned.  its in mm
     commands: {
       coolant: 'M8',  //M8 for flood or M7 for mist

@@ -1111,9 +1111,7 @@ io.on("connection", function(socket) {
       }
       let maxJogRateX = Math.min(maxRateX, pendantConfig.maxRateXoverride);
       let maxJogRateY = Math.min(maxRateY, pendantConfig.maxRateYoverride);
-      let minJogRateXY = 1000; // need to make this dynamic eventually
       let maxJogRateZ = Math.min(maxRateZ, pendantConfig.maxRateZoverride);
-      let minJogRateZ = 100; // need to make this dynamic eventually
       let coolantCmd = (pendantConfig.commands.coolant == 'M9') ? '0xA0' :'0xA1';
       let stopJogCmd = {
         stop: false,
@@ -1134,7 +1132,6 @@ io.on("connection", function(socket) {
             console.log('jogging');
             return;
         }
-
       }, 10);
 
      
@@ -1173,7 +1170,7 @@ io.on("connection", function(socket) {
       */
         
       pendantParser.on('data', function(data) {
-        console.log('PENDANT:', data);
+        //console.log('PENDANT:', data);
         pendantCmd = data.split(",");
         
         
@@ -1283,15 +1280,17 @@ io.on("connection", function(socket) {
 
           case ((pendantCmd[0] == 12) && (status.comms.runStatus == "Idle")):
             //Continous jogging. 
+            //console.log("P: " + queuePointer);
+            console.log("Q: " + gcodeQueue.length);
+            //console.log("S: " + sentBuffer);
 
             jogString = null;
             oldSec = newSec;
             newSec = Date.now();
             delta = newSec - oldSec;
-            console.log(delta);
+            //console.log(delta);
             dir = (pendantCmd[2] > 1) ? -1 : 1;
             axis = (pendantCmd[1] == 1) ? "X" : (pendantCmd[1] == 2) ? "Y" : "Z";
-            console.log('axis: ' + axis + " pendantCmd[1]: " + pendantCmd[1])
            
 
             if (delta > 500) {
@@ -1309,18 +1308,19 @@ io.on("connection", function(socket) {
               delta = (delta < 10) ? 10 : delta;
               f = (100 - delta) * (maxJogRate[axis] - minJogRate[axis]) / (100 - 10) + minJogRate[axis]
               // Convert feed rate from mm/min to mm/sec
-              v = (f / 60.0);
-              console.log("f : " + f)
-              console.log("v : " + v)
+              v = (6000 / 60.0);
+              //console.log("f : " + f)
+              //console.log("v : " + v)
               // Update AXES_ACCEL so it uses the value for the
               // selected axis.
-              dt = ((v * v) / (2.0 * maxAcellX * 14));
-              console.log("dt: " + dt)
+              //dt = ((v * v) / (2.0 * maxAcellX * 14));
+              dt = v / (2 * maxAcellX * 10)
+              //console.log("dt: " + dt)
               //Serial.print("dt: ");Serial.println(dt);
               s = (v * dt) * dir;
-              console.log("s: " + s)
-              s /= Math.abs(10);
-              console.log("s: " + s)  
+              //console.log("s: " + s)
+              //s /= Math.abs(10);
+              //console.log("s: " + s)  
               
             }
 
@@ -1331,7 +1331,7 @@ io.on("connection", function(socket) {
             jogString = `$J=G91 G21 ${axis}${(s).toFixed(2)} F${(f).toFixed(0)}`;
 
             if(jogString) {
-              console.log(jogString)
+              //console.log(jogString)
               addQToEnd(jogString);
               send1Q();
             }             
@@ -2054,13 +2054,13 @@ io.on("connection", function(socket) {
             if (data.indexOf('$122') === 0) {
               maxAcellZ = parseInt(data.split('=')[1]);
             }
+
+            if (command.indexOf('$J') == 0 && data.indexOf('ok') === 0 ) {
+              waitingForOk = false;
+            }
             //
 
-            var string = "";
-            if (data.indexOf('$J') == 0 && data.indexOf('ok') === -1) {
-              string += "here "
-            }
-
+            var string = "";      
             
             if (status.comms.sduploading) {
               string += "SD: "
