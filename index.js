@@ -1125,13 +1125,18 @@ io.on("connection", function(socket) {
       }
       newSec = Date.now();
       waitingForOk = false;
+      isJogging = false;
 
 
       setInterval( function() {
-        if (xySmoothJogEnabled) {
-            // let's do some jogging
-            console.log('jogging');
-            return;
+        encTiming = Date.now();
+        if ((encTiming - newSec) > 500 && isJogging == true) {
+          stop(stopJogCmd);
+          // let's do some jogging
+          console.log('not joggin');
+          isJogging = false;
+        } else {
+          //console.log('not jogging');
         }
       }, 10);
 
@@ -1280,10 +1285,13 @@ io.on("connection", function(socket) {
             break;
 
           case ((pendantCmd[0] == 12) && (status.comms.runStatus == "Idle")):
+            
+          /*
             if(waitingForOk) {
               console.log('ign');
               return;
             }
+            */
             //Continous jogging. 
             //console.log("P: " + queuePointer);
             console.log("Q: " + gcodeQueue.length);
@@ -1297,16 +1305,18 @@ io.on("connection", function(socket) {
             dir = (pendantCmd[2] > 1) ? -1 : 1;
             axis = (pendantCmd[1] == 1) ? "X" : (pendantCmd[1] == 2) ? "Y" : "Z";
            
-
+            /*
             if (delta > 500) {
               // its been too long so lets reset
               return;
             }
+            */
 
             if (delta > 100) {
               // slow jogging
               s = 0.1 * dir;
               f = 1000;
+              isJogging = false;
              
             } else {            
               
@@ -1327,6 +1337,9 @@ io.on("connection", function(socket) {
               //console.log("s: " + s)
               //s /= Math.abs(10);
               //console.log("s: " + s)  
+              isJogging = true;
+              s = 10;
+              f = 6000;
               
             }
 
@@ -1340,7 +1353,7 @@ io.on("connection", function(socket) {
               //console.log(jogString)
               addQToEnd(jogString);
               send1Q();
-              waitingForOk = true;
+              //isJogging = true;
             }             
             break;    
           
