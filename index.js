@@ -1126,18 +1126,17 @@ io.on("connection", function(socket) {
       newSec = Date.now();
       waitingForOk = false;
       isJogging = false;
+      commandCounter = 0;
 
 
       setInterval( function() {
         encTiming = Date.now();
         if ((encTiming - newSec) > 500 && isJogging == true) {
           stop(stopJogCmd);
-          // let's do some jogging
           console.log('not joggin');
           isJogging = false;
-        } else {
-          //console.log('not jogging');
-        }
+          commandCounter = 0;
+        } 
       }, 10);
 
      
@@ -1286,12 +1285,12 @@ io.on("connection", function(socket) {
 
           case ((pendantCmd[0] == 12) && (status.comms.runStatus == "Idle")):
             
-          /*
+          
             if(waitingForOk) {
               console.log('ign');
               return;
             }
-            */
+            
             //Continous jogging. 
             //console.log("P: " + queuePointer);
             console.log("Q: " + gcodeQueue.length);
@@ -1328,18 +1327,20 @@ io.on("connection", function(socket) {
               //console.log("v : " + v)
               // Update AXES_ACCEL so it uses the value for the
               // selected axis.
-              //dt = ((v * v) / (2.0 * maxAcellX * 14));
+              dt = ((v * v) / (2.0 * maxAcellX * 14));
              // dt = v / (2 * maxAcellX * 10)
-              dt = .01
+              //dt = .01
               //console.log("dt: " + dt)
               //Serial.print("dt: ");Serial.println(dt);
               s = (v * dt) * dir;
               //console.log("s: " + s)
-              //s /= Math.abs(10);
+              s /= Math.abs(10);
               //console.log("s: " + s)  
               isJogging = true;
-              s = 10;
-              f = 6000;
+              //s = 10;
+              //f = 6000;
+              commandCounter ++;
+              console.log('command counter: ' + commandCounter);
               
             }
 
@@ -1353,7 +1354,7 @@ io.on("connection", function(socket) {
               //console.log(jogString)
               addQToEnd(jogString);
               send1Q();
-              //isJogging = true;
+              waitingForOk = true;
             }             
             break;    
           
@@ -3610,6 +3611,8 @@ function stop(data) {
           addQRealtime(String.fromCharCode(0x85)); // canceljog
           debug_log('Sent: 0x85 Jog Cancel');
           debug_log(queuePointer, gcodeQueue)
+          addQToStart('G4P0');
+          send1Q();
         }
 
         if (!data.abort && !data.jog) { // pause motion first.
