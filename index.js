@@ -1128,51 +1128,19 @@ io.on("connection", function(socket) {
       isJogging = false;
       commandCounter = 0;
 
+      HERTZ_LIMIT = 60; // 60 items per second
+      FLUSH_INTERVAL = 250; // milliseconds
+      QUEUE_LENGTH = Math.floor(HERTZ_LIMIT / (1000 / FLUSH_INTERVAL));
 
-      setInterval( function() {
-        encTiming = Date.now();
-        if ((encTiming - newSec) > 500 && isJogging == true) {
-          stop(stopJogCmd);
-          console.log('not joggin');
-          isJogging = false;
-          commandCounter = 0;
-        } 
-      }, 10);
+      DEFAULT_FEEDRATE_MIN = 500;
+      DEFAULT_FEEDRATE_MAX = 1500;
+      DEFAULT_HERTZ = 10; // 10 times per second
+      DEFAULT_OVERSHOOT = 1;
 
-     
-      /*
-      setInterval( function() {        
-        if (xySmoothJogEnabled) {
-          let slowestAxis = Math.min(maxRateX, maxRateY, pendantConfig.maxRateXoverride, pendantConfig.maxRateYoverride);
-          console.log('slowest ' + slowestAxis)
-          let currentSpeed = (xyThrow * slowestAxis).toFixed(0);
-          let step = ((currentSpeed / 60) * (commandRate / 1000)).toFixed(3);    
-          var axisString = currentAxis.map(axis => axis + step).join(" ");
-          console.log(`$J=G91 G21 ${axisString} F${currentSpeed}`);
-          addQToEnd(`$J=G91 G21 ${axisString} F${currentSpeed}`);
-          send1Q();
-          waitingOnOK = true;
-          return;
-        }
-    
-        if(zSmoothJogEnabled) {
-          let slowestAxis = Math.min(maxRateZ, pendantConfig.maxRateZoverride);
-          let currentSpeed = (Math.abs(zRotation) * slowestAxis).toFixed(0);
-          let step = ((currentSpeed / 60) * (commandRate / 1000)).toFixed(3);
-          if(zRotation < 0) {
-            step = -step;
-          }  
-          console.log(`$J=G91 G21 Z${step} F${currentSpeed}`);
-          addQToEnd(`$J=G91 G21 Z${step} F${currentSpeed}`);
-          send1Q();
-          waitingOnOK = true;
-    
-          return;
-        }
-    
-      }, commandRate);   
-      
-      */
+      zone = 0;
+      axis = '';
+      jqueue = [];
+      timer = null;
         
       pendantParser.on('data', function(data) {
         //console.log('PENDANT:', data);
@@ -1284,78 +1252,37 @@ io.on("connection", function(socket) {
             break;
 
           case ((pendantCmd[0] == 12) && (status.comms.runStatus == "Idle")):
-            
-          
-            if(waitingForOk) {
-              console.log('ign');
-              return;
-            }
-            
-            //Continous jogging. 
-            //console.log("P: " + queuePointer);
-            console.log("Q: " + gcodeQueue.length);
-            //console.log("S: " + sentBuffer);
 
-            jogString = null;
-            oldSec = newSec;
-            newSec = Date.now();
-            delta = newSec - oldSec;
-            //console.log(delta);
-            dir = (pendantCmd[2] > 1) ? -1 : 1;
+            let dir = (pendantCmd[2] > 1) ? -1 : 1;
             axis = (pendantCmd[1] == 1) ? "X" : (pendantCmd[1] == 2) ? "Y" : "Z";
-           
-            /*
-            if (delta > 500) {
-              // its been too long so lets reset
+            
+            if (axis == 3) { // ignore Z for now
               return;
             }
-            */
 
-            if (delta > 100) {
-              // slow jogging
-              s = 0.1 * dir;
-              f = 1000;
-              isJogging = false;
+            //const distance = Math.min(this.actions.getJogDistance(), 1);
+            const distance = 1;
+            const feedrateMin = 500;
+            const feedrateMax = 2500;
+            const hertz = 10;
+            const overshoot = 1;
+
+            zone = 7;
+            
+            accumulate(zone, {
+              axis: axis,
+              distance: distance,
+              feedrateMin: feedrateMin,
+              feedrateMax: feedrateMax,
+              hertz: hertz,
+              overshoot: overshoot
+            });           
+
+            
+
+            //jogString = `$J=G91 G21 ${axis}${(s).toFixed(2)} F${(f).toFixed(0)}`;
+
              
-            } else {            
-              
-              delta = (delta < 10) ? 10 : delta;
-              f = (100 - delta) * (maxJogRate[axis] - minJogRate[axis]) / (100 - 10) + minJogRate[axis]
-              // Convert feed rate from mm/min to mm/sec
-              v = (f / 60.0);
-              //console.log("f : " + f)
-              //console.log("v : " + v)
-              // Update AXES_ACCEL so it uses the value for the
-              // selected axis.
-              dt = ((v * v) / (2.0 * maxAcellX * 14));
-             // dt = v / (2 * maxAcellX * 10)
-              //dt = .01
-              //console.log("dt: " + dt)
-              //Serial.print("dt: ");Serial.println(dt);
-              s = (v * dt) * dir;
-              //console.log("s: " + s)
-              s /= Math.abs(10);
-              //console.log("s: " + s)  
-              isJogging = true;
-              //s = 10;
-              //f = 6000;
-              commandCounter ++;
-              console.log('command counter: ' + commandCounter);
-              
-            }
-
-            if (pendantCmd[1] == 3) { // ignore Z for now
-              return;
-            }
-
-            jogString = `$J=G91 G21 ${axis}${(s).toFixed(2)} F${(f).toFixed(0)}`;
-
-            if(jogString) {
-              //console.log(jogString)
-              addQToEnd(jogString);
-              send1Q();
-              waitingForOk = true;
-            }             
             break;    
           
           case ((pendantCmd[0] == 13) && (status.comms.runStatus != "Run")):
@@ -2710,6 +2637,75 @@ function runJob(object) {
     debug_log('ERROR: Machine connection not open!');
   }
 }
+
+function accumulate(zone = 0, { axis = '', distance = 1, feedrateMin, feedrateMax, hertz, overshoot }) {
+  zone = Number(zone) || 0;
+  axis = ('' + axis).toUpperCase();
+  feedrateMin = 500;
+  feedrateMax = 2500;
+  hertz = Number(hertz) || DEFAULT_HERTZ;
+  overshoot = Number(overshoot) || DEFAULT_OVERSHOOT;
+
+  if ((this.zone !== zone) ||
+        (this.axis !== axis) ||
+        (this.jqueue.length >= QUEUE_LENGTH)) {
+    flush();
+  }
+
+  const zoneMax = 7; // Shuttle Zone +7/-7
+  const zoneMin = 1; // Shuttle Zone +1/-1
+  const direction = (zone < 0) ? -1 : 1;
+  const feedrate = ((feedrateMax - feedrateMin) * distance * ((Math.abs(zone) - zoneMin) / (zoneMax - zoneMin))) + feedrateMin;
+  const relativeDistance = direction * overshoot * (feedrate / 60.0) / hertz;
+
+  this.zone = zone;
+  this.axis = axis;
+  this.jqueue.push({
+    feedrate: feedrate,
+    relativeDistance: relativeDistance
+  });
+
+  if (!this.timer) {
+    this.timer = setTimeout(() => {
+      flush();
+    }, FLUSH_INTERVAL);
+  }
+}
+
+function clear() {
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  jqueue = [];
+}
+
+function flush(callback) {
+  if (jqueue.length === 0) {
+    return;
+  }
+
+  const accumulatedResult = {
+    axis: axis,
+    feedrate: _.sumBy(jqueue, (o) => o.feedrate) / jqueue.length,
+    relativeDistance: _.sumBy(jqueue, (o) => o.relativeDistance)
+  };
+
+  clearTimeout(timer);
+  timer = null;
+  jqueue = [];
+  //io.emit('flush', accumulatedResult);
+  //typeof callback === 'function' && callback(accumulatedResult);
+  feedrate = accumulatedResult.feedrate.toFixed(3) * 1;
+  relativeDistance = accumulatedResult.relativeDistance.toFixed(4) * 1;
+  addQToEnd('$J=G91G21 F' + feedrate + ' ' + axis + relativeDistance);
+  send1Q();
+
+  //controller.command('gcode', 'G91'); // relative
+  ///controller.command('gcode', 'G1 F' + feedrate + ' ' + axis + relativeDistance);
+  //controller.command('gcode', 'G90'); // absolute
+}
+
 
 function stopPendantPort() {
   status.pendant.connectionStatus = 0;
