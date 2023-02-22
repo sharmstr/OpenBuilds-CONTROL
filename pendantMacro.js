@@ -23,7 +23,7 @@ window.connectPendant = function () {
   };
   socket.emit('pendantConfig', pendantConfig);
   
-  var data = {
+  var portInfo = {
     port: "COM8",
     baud: 57600,
     type: "usb"
